@@ -1,0 +1,14 @@
+{
+  "projects": {
+    "default": "whatsappchatread"
+  },
+  "targets": {
+    "whatsappchatread": {
+      "hosting": {
+        "pdf-app": [
+          "nadeem-pdf-tool"
+        ]
+      }
+    }
+  }
+}

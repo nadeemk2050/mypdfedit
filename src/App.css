@@ -1,0 +1,9 @@
+/* Resetting default Vite styles for full-screen app */
+#root {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  text-align: left;
+  width: 100%;
+  height: 100%;
+}
