@@ -12,7 +12,8 @@ import {
   arrayUnion,
   arrayRemove
 } from "firebase/firestore";
-import { auth, googleProvider, db } from './firebase';
+import { auth, googleProvider, db, storage } from './firebase';
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { Upload, Type, Eraser, Pipette, MousePointer2, Save, Undo, Check, X, Move, Bold, Italic, ChevronLeft, ChevronRight, FileText, Settings, Maximize, Pen, Image as ImageIcon, RotateCw, User, LogIn, LogOut, Trash2, FilePlus, ZoomIn, ZoomOut, Underline } from 'lucide-react';
 
 function App() {
@@ -158,17 +159,21 @@ function App() {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
-        const docRef = doc(db, "users", currentUser.uid);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          setSavedImages(docSnap.data().images || []);
-        } else {
-          try {
+        try {
+          const docRef = doc(db, "users", currentUser.uid);
+          const docSnap = await getDoc(docRef);
+          if (docSnap.exists()) {
+            setSavedImages(docSnap.data().images || []);
+          } else {
             await setDoc(docRef, { images: [] });
             setSavedImages([]);
-          } catch (error) {
-            console.error("Failed to create user document:", error);
           }
+        } catch (error) {
+          console.error("Firestore initialization error:", error);
+          if (error.message.includes('permission')) {
+             console.warn("User profile data could not be loaded due to permissions. Check Firestore rules.");
+          }
+          setSavedImages([]);
         }
       } else {
         setSavedImages([]);
@@ -205,30 +210,41 @@ function App() {
     setShowProfile(false);
   };
 
-  const handleProfileUpload = (e) => {
+  const handleProfileUpload = async (e) => {
     if (!user || !user.uid) return alert("Please Sign In properly to upload assets.");
     const file = e.target.files[0];
     if (!file) return;
 
     if (savedImages.length >= 10) return alert("Limit Reached! You have 10 images already.");
 
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      const base64 = event.target.result;
-      if (base64.length > 1000000) return alert("Image is too big! Please use a smaller logo or signature (under 1MB).");
+    // Check size (2MB limit for storage is reasonable, though we keep 1MB for safety)
+    if (file.size > 1000000) return alert("Image is too big! Please keep it under 1MB.");
 
-      try {
-        const userRef = doc(db, "users", user.uid);
-        // Use setDoc with merge:true so it creates the profile if it's missing
-        await setDoc(userRef, { images: arrayUnion(base64) }, { merge: true });
-        setSavedImages(prev => [...prev, base64]);
-        alert("Success! Image saved to your assets.");
-      } catch (error) {
-        console.error("Upload failed:", error);
-        alert("Could not save. Check console for errors.");
+    try {
+      setIsSaving(true);
+      // 1. Storage Path: users/UID/ASSET_NAME_TIMESTAMP
+      const storageRef = ref(storage, `users/${user.uid}/assets/${Date.now()}_${file.name}`);
+      
+      // 2. Upload to Storage
+      const snapshot = await uploadBytes(storageRef, file);
+      const downloadURL = await getDownloadURL(snapshot.ref);
+
+      // 3. Save URL to Firestore
+      const userRef = doc(db, "users", user.uid);
+      await setDoc(userRef, { images: arrayUnion(downloadURL) }, { merge: true });
+      
+      setSavedImages(prev => [...prev, downloadURL]);
+      alert("Success! Image saved to your assets.");
+    } catch (error) {
+      console.error("Upload failed:", error);
+      if (error.code === 'storage/unauthorized' || error.message.includes('permission')) {
+        alert("Permission Denied: Please check your Firebase Security Rules (Storage and Firestore).");
+      } else {
+        alert("Upload failed. Check console for details.");
       }
-    };
-    reader.readAsDataURL(file);
+    } finally {
+      setIsSaving(false);
+    }
     e.target.value = null;
   };
 
